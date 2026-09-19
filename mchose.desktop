@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=MCHOSE Mouse
+Name[zh_CN]=迈从鼠标
+Comment=Configure the MCHOSE mouse
+Exec=mchose-gui
+Icon=mchose
+Terminal=false
+StartupWMClass=mchose
+Keywords=mouse;dpi;gaming;mchose;
+Categories=Settings;HardwareSettings;
