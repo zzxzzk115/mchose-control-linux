@@ -187,6 +187,9 @@ pub const DPI_STAGES: usize = 6;
 ///  17  bit 0 of `sensor` is always set, and refuses to be cleared
 const DEVICE_OWNED: [usize; 1] = [3];
 const SENSOR_OWNED_BITS: u8 = 0x01;
+fn sensor_matches(actual: u8, wanted: u8) -> bool {
+    actual & !SENSOR_OWNED_BITS == wanted & !SENSOR_OWNED_BITS
+}
 
 impl Config {
     /// Read the live config with `0x12 0x67`.
@@ -245,7 +248,7 @@ impl Config {
                 continue;
             }
             if i == 17 {
-                if a & !SENSOR_OWNED_BITS != b & !SENSOR_OWNED_BITS {
+                if !sensor_matches(*a, *b) {
                     return false;
                 }
                 continue;
@@ -458,7 +461,6 @@ pub fn set_flags_from(
     angle_snap: bool,
     motion_sync: bool,
 ) -> io::Result<()> {
-    store_lod(lod);
     send(
         dev,
         REPORT_SHORT,
@@ -482,14 +484,16 @@ pub fn set_flags_from(
         | (angle_snap as u8) << 3
         | (motion_sync as u8) << 4;
     let mut after = Config::read(dev)?;
-    if after.sensor() == wanted {
+    if sensor_matches(after.sensor(), wanted) {
+        store_lod(lod);
         return Ok(());
     }
     after.set_sensor(wanted);
     after.write(dev)?;
     for _ in 0..5 {
         sleep(Duration::from_millis(120));
-        if Config::read(dev)?.sensor() == wanted {
+        if sensor_matches(Config::read(dev)?.sensor(), wanted) {
+            store_lod(lod);
             return Ok(());
         }
     }
@@ -601,6 +605,15 @@ pub fn set_rotation(dev: &HidRaw, degrees: i8) -> io::Result<()> {
 #[cfg(test)]
 mod rotation_tests {
     use super::*;
+    #[test]
+    fn sensor_confirmation_ignores_device_owned_bit_but_checks_every_setting() {
+        // A7 Pro changes bit 0 when LOD changes: 0xd5 is a valid readback of 0xd4.
+        assert!(sensor_matches(0xd5, 0xd4));
+        assert!(sensor_matches(0xd4, 0xd5));
+        for bit in 1..8 {
+            assert!(!sensor_matches(0xd4 ^ (1 << bit), 0xd4));
+        }
+    }
     #[test]
     fn signed_angles_round_trip_without_touching_other_fields() {
         for degree in -30..=30 {

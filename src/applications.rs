@@ -11,6 +11,7 @@ pub struct Application {
     pub name: String,
     pub chinese_name: String,
     pub filter: String,
+    pub icon: String,
 }
 impl Application {
     pub fn label(&self, language: Language) -> &str {
@@ -152,6 +153,7 @@ fn parse_desktop(id: &str, text: &str, desktop: &str) -> Option<Application> {
     }
     Some(Application {
         id: app_id.into(),
+        icon: get("Icon").into(),
         name: get("Name").replace("\\s", " "),
         chinese_name: if !get("Name[zh_CN]").is_empty() {
             get("Name[zh_CN]")
@@ -261,6 +263,7 @@ pub fn installed() -> Vec<Application> {
                 continue;
             }
             result.push(Application {
+                icon: format!("steam_icon_{id}"),
                 id: format!("steam:{id}"),
                 name,
                 chinese_name: String::new(),
@@ -293,6 +296,7 @@ pub fn observed(window: &auto::Window) -> Option<Application> {
     };
     Some(Application {
         id: "recent".into(),
+        icon: window.app_id.clone(),
         name,
         chinese_name: String::new(),
         filter: terms.join(" || "),
@@ -362,4 +366,45 @@ mod tests {
         )
         .unwrap());
     }
+}
+
+/// Resolve common desktop/Steam PNG icons; missing icons use a GUI placeholder.
+pub fn icon_path(name: &str) -> Option<PathBuf> {
+    if name.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(name);
+    if path.is_absolute() {
+        return path.is_file().then_some(path);
+    }
+    if name.contains('/') || name.contains("..") {
+        return None;
+    }
+    let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".local/share"));
+    let mut roots = vec![data.join("icons"), home.join(".icons")];
+    roots.extend(
+        std::env::var("XDG_DATA_DIRS")
+            .unwrap_or_else(|_| "/usr/local/share:/usr/share".into())
+            .split(':')
+            .map(|p| PathBuf::from(p).join("icons")),
+    );
+    for root in roots {
+        for theme in ["hicolor", "breeze", "Adwaita"] {
+            for size in ["48x48", "64x64", "32x32", "128x128", "256x256"] {
+                let path = root
+                    .join(theme)
+                    .join(size)
+                    .join("apps")
+                    .join(format!("{name}.png"));
+                if path.is_file() {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    let path = PathBuf::from("/usr/share/pixmaps").join(format!("{name}.png"));
+    path.is_file().then_some(path)
 }

@@ -22,8 +22,10 @@ pub fn path() -> PathBuf {
 }
 
 /// UTC, so the lines sort and nothing depends on a timezone database.
-fn stamp() -> String {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+pub(crate) fn stamp() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     let secs = now.as_secs();
     let (h, m, s) = (secs / 3600 % 24, secs / 60 % 60, secs % 60);
     let days = secs / 86_400;

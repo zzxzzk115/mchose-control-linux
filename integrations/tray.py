@@ -23,7 +23,7 @@ xml='''<node><interface name="org.kde.StatusNotifierItem">
 <property name="Version" type="u" access="read"/><property name="TextDirection" type="s" access="read"/><property name="Status" type="s" access="read"/>
 </interface></node>'''
 def props(i):
-    labels={1:'打开设置' if zh else 'Open settings',2:'启用应用自动切换' if zh else 'Enable automatic presets',3:'暂停并恢复原设置' if zh else 'Pause and restore',4:'退出并恢复原设置' if zh else 'Quit and restore'}
+    labels={1:'打开设置' if zh else 'Open settings',2:'启用应用自动切换' if zh else 'Enable automatic presets',3:'暂停并切回 desktop' if zh else 'Pause and apply desktop',4:'退出并切回 desktop' if zh else 'Quit and apply desktop'}
     if i==0:return {'children-display':GLib.Variant('s','submenu')}
     return {'label':GLib.Variant('s',labels[i]),'enabled':GLib.Variant('b',True),'visible':GLib.Variant('b',True)}
 def action(i):

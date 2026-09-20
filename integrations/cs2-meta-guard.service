@@ -1,0 +1,15 @@
+[Unit]
+Description=CS2 foreground Meta shortcut guard (preserves Alt+Tab)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/.local/lib/cs2-meta-guard.py
+ExecStopPost=/usr/bin/python3 %h/.local/lib/cs2-meta-guard.py --restore
+Restart=always
+RestartSec=2
+TimeoutStopSec=20
+
+[Install]
+WantedBy=graphical-session.target

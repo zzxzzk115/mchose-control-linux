@@ -52,8 +52,8 @@ mchose - configure MCHOSE mice on Linux
   mchose backup [file]           save the config block
   mchose restore <file>          write a saved config block back
   mchose preset                  list the presets, mark the one in effect
-  mchose preset cs               competitive Counter-Strike
-  mchose preset desk             a day at the desk
+  mchose preset cs2               competitive Counter-Strike
+  mchose preset desktop             a day at the desk
   mchose preset save <name>      save settings including sensor rotation
   mchose preset delete <name>    remove a saved preset
 
@@ -120,7 +120,7 @@ const USAGE_ZH: &str = "迈从鼠标 · Linux 配置工具
 
 示例：mchose --lang zh rotation -8
       mchose preset save 我的CS
-内置 cs 预设保留你的角度；自定义预设保存并恢复角度。
+内置 cs2 预设保留你的角度；自定义预设保存并恢复角度。
 LOD 显示的是工具上次写入值，不能从设备读取。
 ";
 
@@ -1087,8 +1087,8 @@ fn auto_cli(args: &[String]) -> R {
     let cmd = args.first().map(String::as_str).unwrap_or("help");
     match cmd {
         "help" | "--help" => {
-            out!("Automatic foreground presets (KDE Plasma 6)\n  auto apps [search] | bind-app <application-id> <preset>\n  auto bind <preset> '<filter>'\n  auto rules | remove <number> | enable <number> | disable <number>\n  auto start | stop | status | inspect\n  auto test '<filter>'\n  auto autostart <on|off>\nFields: app_id, class, exe, path, title. Globs: * ?. Operators: && || ! ( ).\nExample: mchose auto bind cs 'app_id=steam_app_730 || exe=cs2'\nFirst enabled match wins. Unmatched focus restores the previous mouse configuration.",
-        "前台应用自动预设（KDE Plasma 6）\n  auto apps [搜索词] | bind-app <应用ID> <预设>\n  auto bind <预设> '<过滤规则>'\n  auto rules | remove <序号> | enable <序号> | disable <序号>\n  auto start | stop | status | inspect\n  auto test '<过滤规则>'\n  auto autostart <on|off>\n字段：app_id、class、exe、path、title。通配符：* ?。逻辑：&& || ! ( )。\n示例：mchose auto bind cs 'app_id=steam_app_730 || exe=cs2'\n第一条已启用且匹配的规则优先；切出匹配应用后恢复原配置。");
+            out!("Automatic foreground presets (KDE Plasma 6)\n  auto apps [search] | bind-app <application-id> <preset>\n  auto bind <preset> '<filter>'\n  auto rules | remove <number> | enable <number> | disable <number>\n  auto start | stop | status | inspect | events | notify-test\n  auto test '<filter>'\n  auto autostart <on|off>\nFields: app_id, class, exe, path, title. Globs: * ?. Operators: && || ! ( ).\nExample: mchose auto bind cs2 'app_id=steam_app_730 || exe=cs2'\nFirst enabled match wins. Unmatched focus applies the desktop preset.",
+        "前台应用自动预设（KDE Plasma 6）\n  auto apps [搜索词] | bind-app <应用ID> <预设>\n  auto bind <预设> '<过滤规则>'\n  auto rules | remove <序号> | enable <序号> | disable <序号>\n  auto start | stop | status | inspect | events | notify-test\n  auto test '<过滤规则>'\n  auto autostart <on|off>\n字段：app_id、class、exe、path、title。通配符：* ?。逻辑：&& || ! ( )。\n示例：mchose auto bind cs2 'app_id=steam_app_730 || exe=cs2'\n第一条已启用且匹配的规则优先；切出匹配应用后应用 desktop 默认预设。");
         }
         "apps" => {
             let query = args.get(1).map(|s| s.to_lowercase()).unwrap_or_default();
@@ -1186,11 +1186,17 @@ fn auto_cli(args: &[String]) -> R {
         "stop" => {
             auto::stop().map_err(io)?;
             out!(
-                "Stopping; the previous configuration will be restored.",
-                "正在停止，将恢复自动切换前的配置。"
+                "Stopping; the desktop preset will be applied.",
+                "正在停止，将应用 desktop 默认预设。"
             );
         }
         "run" => auto::run().map_err(io)?,
+        "events" => print!("{}", mchose::notifications::history()),
+        "notify-test" => mchose::notifications::send(
+            "MCHOSE Control",
+            i18n::text("Desktop notification test", "桌面通知测试"),
+        )
+        .map_err(io)?,
         "status" => {
             let s = auto::status();
             out!(
@@ -1200,6 +1206,9 @@ fn auto_cli(args: &[String]) -> R {
                 s.state,
                 s.active
             );
+            if !s.last_event.is_empty() {
+                println!("{}", s.last_event);
+            }
             if !s.message.is_empty() {
                 println!("{}", s.message);
             }

@@ -15,3 +15,5 @@ pub mod applications;
 pub mod system;
 
 pub mod desktop;
+
+pub mod notifications;

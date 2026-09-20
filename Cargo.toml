@@ -1,6 +1,6 @@
 [package]
 name = "mchose"
-version = "0.3.1"
+version = "0.3.3"
 edition = "2021"
 description = "MCHOSE Control Linux: mouse settings, application presets and desktop integration"
 license = "MIT"

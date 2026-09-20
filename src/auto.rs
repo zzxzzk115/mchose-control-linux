@@ -234,7 +234,7 @@ pub fn rules() -> io::Result<Vec<Rule>> {
         }
         rules.push(Rule {
             enabled: fields[0] == "1",
-            preset: fields[1].into(),
+            preset: preset::canonical_name(fields[1]).into(),
             filter: fields[2].into(),
         });
     }
@@ -344,6 +344,8 @@ pub fn stop() -> io::Result<()> {
 }
 #[derive(Clone, Default)]
 pub struct Status {
+    pub revision: u64,
+    pub last_event: String,
     pub state: String,
     pub active: String,
     pub message: String,
@@ -354,6 +356,7 @@ fn clean(s: &str) -> String {
     s.replace(['\n', '\r', '\t'], " ")
 }
 fn write_status(s: &Status) {
+    let revision = s.revision.to_string();
     let fields = [
         &s.state,
         &s.active,
@@ -368,6 +371,8 @@ fn write_status(s: &Status) {
         &s.last_app.exe,
         &s.last_app.path,
         &s.last_app.title,
+        &revision,
+        &s.last_event,
     ];
     let _ = atomic_write(
         &runtime().join("status"),
@@ -384,6 +389,8 @@ pub fn status() -> Status {
     let f: Vec<_> = t.split('\t').collect();
     let at = |i| f.get(i).copied().unwrap_or("").to_owned();
     Status {
+        revision: at(13).parse().unwrap_or(0),
+        last_event: at(14),
         state: at(0),
         active: at(1),
         message: at(2),
@@ -547,7 +554,15 @@ impl Baseline {
         self.check(&dev)?;
         self.config.write(&dev)?;
         proto::confirm(&dev, &self.config)?;
-        preset::apply(&dev, &self.preset)
+        let mut desktop =
+            preset::get("desktop").ok_or_else(|| invalid("desktop preset missing"))?;
+        if desktop.rotation.is_none() {
+            desktop.rotation = self.preset.rotation;
+        }
+        if desktop.system.is_none() {
+            desktop.system = self.preset.system;
+        }
+        preset::apply(&dev, &desktop)
     }
 }
 static QUIT: AtomicBool = AtomicBool::new(false);
@@ -563,13 +578,24 @@ pub fn run() -> io::Result<()> {
         libc::signal(libc::SIGTERM, quit as *const () as usize);
         libc::signal(libc::SIGINT, quit as *const () as usize);
     }
-    let mut bridge = Bridge::new()?;
+    let notifier = crate::notifications::Notifier::new();
+    let mut bridge = match Bridge::new() {
+        Ok(b) => b,
+        Err(e) => {
+            notifier.event(
+                crate::i18n::text("Automatic switching failed", "自动切换启动失败"),
+                &e.to_string(),
+            );
+            return Err(e);
+        }
+    };
     let mut status = Status {
         state: "starting".into(),
         ..Status::default()
     };
     write_status(&status);
     let mut baseline: Option<Baseline> = None;
+    let mut desktop_pending = true;
     let mut active: Option<(String, Preset)> = None;
     let mut candidate: Option<(String, Preset)> = None;
     let mut changed = Instant::now();
@@ -617,7 +643,8 @@ pub fn run() -> io::Result<()> {
                 retry = Instant::now();
             }
             if received
-                && (candidate != active || (candidate.is_none() && baseline.is_some()))
+                && (candidate != active
+                    || (candidate.is_none() && (baseline.is_some() || desktop_pending)))
                 && changed.elapsed() >= Duration::from_millis(400)
                 && Instant::now() >= retry
             {
@@ -651,6 +678,14 @@ pub fn run() -> io::Result<()> {
                         None => {
                             if let Some(b) = &baseline {
                                 b.restore()?;
+                            } else {
+                                // On startup outside a matched app, apply desktop too.
+                                // Release the device handle before restore opens it again.
+                                let current = {
+                                    let dev = device()?;
+                                    Baseline::read(&dev)?
+                                };
+                                current.restore()?;
                             }
                             baseline = None;
                         }
@@ -660,11 +695,38 @@ pub fn run() -> io::Result<()> {
                 match operation {
                     Ok(()) => {
                         active = candidate.clone();
+                        desktop_pending = false;
                         status.message.clear();
+                        status.revision = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64;
+                        status.last_event = if let Some((name, p)) = &active {
+                            format!(
+                                "{}: {name} · {} DPI · {} Hz",
+                                crate::i18n::text("Applied preset", "已应用预设"),
+                                p.dpi,
+                                p.rate_hz
+                            )
+                        } else {
+                            crate::i18n::text("Applied desktop preset", "已切回 desktop 预设")
+                                .into()
+                        };
+                        notifier.event("MCHOSE Control", &status.last_event);
                     }
                     Err(e) => {
                         active = None;
-                        status.message = e.to_string();
+                        let message = e.to_string();
+                        if message != status.message {
+                            notifier.event(
+                                crate::i18n::text(
+                                    "Preset switch / restore failed",
+                                    "预设切换或恢复失败",
+                                ),
+                                &message,
+                            );
+                        }
+                        status.message = message;
                         retry = Instant::now() + Duration::from_secs(3);
                     }
                 }
@@ -685,6 +747,7 @@ pub fn run() -> io::Result<()> {
         }
         Ok(())
     })();
+    let had_baseline = baseline.is_some();
     let restored = if let Some(b) = baseline {
         b.restore()
     } else {
@@ -699,6 +762,27 @@ pub fn run() -> io::Result<()> {
     if let Err(e) = restored.as_ref() {
         status.state = "restore-error".into();
         status.message = e.to_string();
+    }
+    if had_baseline && restored.is_ok() {
+        status.revision = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        status.last_event = crate::i18n::text(
+            "Stopped and applied desktop preset",
+            "已停止并切回 desktop 预设",
+        )
+        .into();
+        notifier.event("MCHOSE Control", &status.last_event);
+    }
+    if let Err(e) = result.as_ref().and(restored.as_ref()) {
+        notifier.event(
+            crate::i18n::text(
+                "Automatic switching stopped with an error",
+                "自动切换异常停止",
+            ),
+            &e.to_string(),
+        );
     }
     write_status(&status);
     result.and(restored)

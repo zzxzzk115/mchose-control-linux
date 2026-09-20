@@ -72,25 +72,51 @@ pub const DESK: Preset = Preset {
     sleep_min: 5,
     game_mode: 1,
     rotation: None,
-    system: None,
+    system: Some(crate::system::Settings {
+        speed: 0.0,
+        flat: false,
+    }),
 };
 
 pub fn builtin() -> [(&'static str, Preset); 2] {
-    [("cs", CS), ("desk", DESK)]
+    [("cs2", CS), ("desktop", DESK)]
 }
 
 /// Built-ins plus anything saved, saved wins on a name clash.
 pub fn all() -> BTreeMap<String, Preset> {
+    merge_saved(load_saved())
+}
+fn merge_saved(saved: BTreeMap<String, Preset>) -> BTreeMap<String, Preset> {
     let mut out: BTreeMap<String, Preset> = builtin()
         .into_iter()
         .map(|(n, p)| (n.to_string(), p))
         .collect();
-    out.extend(load_saved());
+    for (name, value) in &saved {
+        out.insert(canonical_name(name).to_owned(), *value);
+    }
+    // Explicit modern names win over legacy aliases.
+    for (name, value) in saved {
+        if canonical_name(&name) == name {
+            out.insert(name, value);
+        }
+    }
     out
 }
 
+pub fn canonical_name(name: &str) -> &str {
+    match name {
+        "cs" => "cs2",
+        "desk" => "desktop",
+        _ => name,
+    }
+}
+
 pub fn get(name: &str) -> Option<Preset> {
-    all().get(&name.to_lowercase()).copied()
+    let all = all();
+    let name = name.to_lowercase();
+    all.get(&name)
+        .or_else(|| all.get(canonical_name(&name)))
+        .copied()
 }
 
 /// Apply the whole preset. The block-borne settings go in one write; rate,
@@ -280,13 +306,21 @@ pub fn save(name: &str, p: &Preset) -> io::Result<()> {
     validate_name(name)?;
     validate(p)?;
     let mut saved = load_saved();
-    saved.insert(name.trim().to_lowercase(), *p);
+    saved.insert(canonical_name(&name.trim().to_lowercase()).to_owned(), *p);
     write_saved(&saved)
 }
 
 pub fn remove(name: &str) -> io::Result<()> {
     let mut saved = load_saved();
-    if saved.remove(&name.to_lowercase()).is_none() {
+    let name = name.to_lowercase();
+    let canonical = canonical_name(&name);
+    let mut removed = saved.remove(canonical).is_some();
+    for legacy in ["cs", "desk"] {
+        if canonical_name(legacy) == canonical {
+            removed |= saved.remove(legacy).is_some();
+        }
+    }
+    if !removed {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             "saved preset not found (built-ins cannot be deleted)",
@@ -374,6 +408,26 @@ pub fn validate(p: &Preset) -> io::Result<()> {
 mod tests {
     use super::*;
     #[test]
+    fn legacy_names_migrate_without_overwriting_existing_cs2() {
+        let old = Preset { dpi: 1200, ..CS };
+        let custom = Preset {
+            dpi: 2400,
+            rotation: Some(-4),
+            ..CS
+        };
+        let presets = merge_saved(BTreeMap::from([
+            ("cs".into(), old),
+            ("cs2".into(), custom),
+            ("desk".into(), old),
+        ]));
+        assert_eq!(presets["cs2"], custom);
+        assert_eq!(presets["desktop"], old);
+        assert!(!presets.contains_key("cs"));
+        assert!(!presets.contains_key("desk"));
+        let migrated = merge_saved(BTreeMap::from([("cs".into(), old)]));
+        assert_eq!(migrated["cs2"], old);
+    }
+    #[test]
     fn old_presets_preserve_rotation_and_new_presets_parse_signed_angles() {
         let old = parse_saved("[old]\ndpi=800\n");
         assert_eq!(old["old"].rotation, None);
@@ -421,7 +475,7 @@ mod tests {
         ] {
             assert!(parse_saved(&format!("[bad]\n{bad}")).is_empty());
         }
-        assert!(matches(
+        assert!(!matches(
             &DESK,
             &Preset {
                 system: CS.system,
